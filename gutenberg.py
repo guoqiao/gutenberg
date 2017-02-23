@@ -17,15 +17,33 @@ def convert_file_json(obj):
     """
     {
         "modified": "2016-11-04T02:52:05.842547",
+        "extent": "190216",
+        "isFormatOf": null
         "format": {
             "Description": {
                 "value": "application/epub+zip",
                 "memberOf": null
             }
         },
-        "extent": "190216",
-        "isFormatOf": null
     }
+    or:
+    "modified": "2014-03-19T20:25:06",
+    "isFormatOf": null,
+    "extent": "177281"
+    "format": [
+        {
+            "Description": {
+                "memberOf": null,
+                "value": "text/plain; charset=us-ascii"
+            }
+        },
+        {
+            "Description": {
+                "value": "application/zip",
+                "memberOf": null
+            }
+        }
+    ],
     -->
     {
         "modified": datetime(...),
