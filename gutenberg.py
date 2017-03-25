@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from collections import defaultdict
 
 from dateutil.parser import parser
@@ -7,13 +8,39 @@ from path import Path
 
 from xml2json import xml2json
 
+
+DT_LEN = len('2016-11-04T02:52:10')
+DT_FMT = '%Y-%m-%dT%H:%M:%S'
+
+
+def get_dt(s):
+    return datetime.strptime(s[:DT_LEN], DT_FMT)
+
+
 def print_json(obj):
     print(json.dumps(obj, indent=4))
 
+
 def get_value(obj):
+    """
+    Extract value from obj.
+
+    "Description": {
+        "value": "application/epub+zip",
+        "memberOf": null
+    }
+    """
     return obj['Description']['value']
 
-def convert_file_json(obj):
+
+def get_values(obj):
+    if isinstance(obj, list):
+        return [get_value(item) for item in obj]
+    else:
+        return [get_value(obj)]
+
+
+def refine_format_json(obj):
     """
     {
         "modified": "2016-11-04T02:52:05.842547",
@@ -51,20 +78,29 @@ def convert_file_json(obj):
         "extent": 190216,
     }
     """
-    print_json(obj)
     return {
-        'modified': parser(obj['modified']),
-        'extent': int(obj['extent']),
-        'format': get_value(obj['format'][0]),
+        'modified_at': obj['modified'][:DT_LEN],
+        'size': int(obj['extent']),
+        'formats': get_values(obj['format']),
     }
 
 
-def convert_json(rdf_json):
+def refine_rdf_json(rdf_json):
     data = {}
     ebook_json = rdf_json['RDF']['ebook']
     data['subjects'] = [get_value(obj) for obj in ebook_json['subject']]
+    data['files'] = [refine_format_json(obj['file']) for obj in ebook_json['hasFormat']]
+
+    data['author'] = ebook_json['creator']['agent']
+
     data['type'] = get_value(ebook_json['type'])
-    data['files'] = [convert_file_json(obj['file']) for obj in ebook_json['hasFormat']]
+    data['language'] = get_value(ebook_json['language'])
+
+    data['downloads'] = ebook_json['downloads']
+    data['title'] = ebook_json['title']
+    data['issued'] = ebook_json['issued']
+
+    data['bookshelf'] = get_values(ebook_json['bookshelf'])
 
     return data
 
@@ -75,7 +111,7 @@ def parse_gutenberg_rdf(rdf_path):
     graph.load(rdf_path)
 
     rdf_json = xml2json(rdf_path.text())
-    data = convert_json(rdf_json)
+    data = refine_rdf_json(rdf_json)
     # TODO: add missing data from rdflib
     return data
 
@@ -130,4 +166,4 @@ def parse(uri):
 
 
 if __name__ == '__main__':
-    print_json(parse_gutenberg_rdf('samples/pg6899.rdf'))
+    print_json(parse_gutenberg_rdf('samples/pg60.rdf'))
