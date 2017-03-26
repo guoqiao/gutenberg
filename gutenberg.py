@@ -1,24 +1,73 @@
+"""
+Parse a RDF file from Gutenburg.
+
+Convert all RDF value to python string and dict.
+Keep value as it is.
+e.g.: do not convert datetime, int, or file format.
+"""
 import json
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 from dateutil.parser import parser
 import rdflib
+from rdflib.term import *
 from path import Path
 
 from xml2json import xml2json
 
 
-DT_LEN = len('2016-11-04T02:52:10')
-DT_FMT = '%Y-%m-%dT%H:%M:%S'
-
-
-def get_dt(s):
-    return datetime.strptime(s[:DT_LEN], DT_FMT)
-
-
 def print_json(obj):
     print(json.dumps(obj, indent=4))
+
+
+def get_uri_to_attrs(rdf_path):
+    """
+    Parse a RDF file, return uri to attrs map for files.
+
+    {
+        "http://www.gutenberg.org/ebooks/6899.epub.noimages": {
+            "format": "Nc7e95e2ac95b4df4975b9e0bacaaa148",
+            "modified": "2016-11-04T02:52:06.208530",
+            "extent": "190216",
+            "isFormatOf": "6899",
+            "22-rdf-syntax-ns#type": "file"
+        },
+        "http://www.gutenberg.org/files/6899/6899-h/6899-h.htm": {
+            "modified": "2014-03-19T20:24:24",
+            "format": "Nec6b6e616be54479b408f12e6dec6dfd",
+            "extent": "504553",
+            "isFormatOf": "6899",
+            "22-rdf-syntax-ns#type": "file"
+        },
+    ...
+    }
+    """
+    g = rdflib.Graph()
+    g.load(rdf_path)
+    has_format = URIRef('http://purl.org/dc/terms/hasFormat')
+    uri_to_attrs = {}
+    for _, uriref in g.subject_objects(predicate=has_format):
+        uri_to_attrs[str(uriref)] = {str(attr).split('/')[-1]: str(value).split('/')[-1] for attr, value in g.predicate_objects(uriref)}
+    return uri_to_attrs
+
+
+def get_attrs_to_uri(uri_to_attrs):
+    """
+    Convert a `uri_to_attrs` map to `attrs_to_uri` map.
+
+    {
+        "2016-11-04T02:52:06.208530-190216": "http://www.gutenberg.org/ebooks/6899.epub.noimages",
+        "2014-03-19T20:25:06-177281": "http://www.gutenberg.org/files/6899/6899.zip",
+        "2014-03-19T20:24:12-475988": "http://www.gutenberg.org/files/6899/6899.txt",
+        ...
+    }
+    """
+    return {
+        '{}-{}'.format(attrs['modified'], attrs['extent']): uri
+        for uri, attrs in uri_to_attrs.items()
+    }
+
 
 
 def get_value(obj):
@@ -40,7 +89,7 @@ def get_values(obj):
         return [get_value(obj)]
 
 
-def refine_format_json(obj):
+def normalize_file_json(obj, attrs_to_uri):
     """
     {
         "modified": "2016-11-04T02:52:05.842547",
@@ -73,97 +122,55 @@ def refine_format_json(obj):
     ],
     -->
     {
-        "modified": datetime(...),
-        "format": "application/epub+zip",
+        "modified": "2014-03-19T20:25:06",
+        "format": ["application/epub+zip", "text/plain; charset=us-ascii"],
         "extent": 190216,
     }
     """
     return {
-        'modified_at': obj['modified'][:DT_LEN],
-        'size': int(obj['extent']),
+        'modified_at': obj['modified'],
+        'size': obj['extent'],
         'formats': get_values(obj['format']),
+        'uri': attrs_to_uri['{}-{}'.format(obj['modified'], obj['extent'])]
     }
 
 
-def refine_rdf_json(rdf_json):
-    data = {}
+def normalize_rdf_json(rdf_path):
+
+    rdf_path = Path(rdf_path)
+    rdf_json = xml2json(rdf_path.text())
+
+    data = OrderedDict()
+    data['id'] = rdf_path.split('/')[-1].split('.')[0][2:]
+
     ebook_json = rdf_json['RDF']['ebook']
-    data['subjects'] = [get_value(obj) for obj in ebook_json['subject']]
-    data['files'] = [refine_format_json(obj['file']) for obj in ebook_json['hasFormat']]
 
-    data['author'] = ebook_json['creator']['agent']
-
-    data['type'] = get_value(ebook_json['type'])
-    data['language'] = get_value(ebook_json['language'])
-
-    data['downloads'] = ebook_json['downloads']
     data['title'] = ebook_json['title']
     data['issued'] = ebook_json['issued']
 
-    data['bookshelf'] = get_values(ebook_json['bookshelf'])
+    data['type'] = get_value(ebook_json['type'])
+    data['language'] = get_value(ebook_json['language'])
+    data['downloads'] = ebook_json['downloads']
+
+    data['subjects'] = get_values(ebook_json['subject'])
+    data['bookshelves'] = get_values(ebook_json['bookshelf'])
+
+    data['author'] = ebook_json['creator']['agent']
+
+    # map from attrs to uri
+    attrs_to_uri = get_attrs_to_uri(get_uri_to_attrs(rdf_path))
+
+    data['files'] = [
+        normalize_file_json(obj['file'], attrs_to_uri)
+        for obj in ebook_json['hasFormat']
+    ]
 
     return data
-
-def parse_gutenberg_rdf(rdf_path):
-    rdf_path = Path(rdf_path)
-
-    graph = rdflib.Graph()
-    graph.load(rdf_path)
-
-    rdf_json = xml2json(rdf_path.text())
-    data = refine_rdf_json(rdf_json)
-    # TODO: add missing data from rdflib
-    return data
-
-class GutenbergRdfParser:
-    """
-    Parse a rdf file to json
-    """
-
-    def __init__(self, rdf_path=None):
-        self.graph = rdflib.Graph()
-        self.load(rdf_path)
-
-    def load(self, rdf_path):
-        if rdf_path:
-            self.rdf_path = Path(rdf_path)
-            self.graph.load(rdf_path)
-            self.data = {}
-            self.tree = self.build_tree()
-            self.raw_json = xml2json(self.rdf_path.text())
-
-    def build_tree(self):
-        tree = defaultdict(dict)
-        for t in self.graph:
-            s, p, o = (str(i) for i in t)
-            if p not in tree[s]:
-                tree[s][p] = []
-            tree[s][p].append(o)
-        return tree
-
-    def get_id(self):
-        """
-        get 6899 from pg6899.rdf
-        """
-        self.id = int(self.rdf_path.namebase[2:])
-
-
-
-def parse(uri):
-    data = {}
-    g = rdflib.Graph()
-    g.load(uri)
-    id = uri.split('/')[-1].split('.')[0][2:]
-    print('id: {}'.format(id))
-
-    has_format = URIRef('http://purl.org/dc/terms/hasFormat')
-
-    for _, file in g.subject_objects(predicate=has_format):
-        print(repr(file))
-        for attr, value in g.predicate_objects(file):
-            repr('{}: {}'.format(attr, value))
-        break
 
 
 if __name__ == '__main__':
-    print_json(parse_gutenberg_rdf('samples/pg60.rdf'))
+    import argparse
+    parser = argparse.ArgumentParser(description='Parse Gutenberg RDF file')
+    parser.add_argument('path', help='Path to a rdf file')
+    args = parser.parse_args()
+    print_json(normalize_rdf_json(args.path))
