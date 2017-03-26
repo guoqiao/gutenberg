@@ -135,16 +135,15 @@ def normalize_file_json(obj, attrs_to_uri):
     }
 
 
-def normalize_rdf_json(rdf_path):
+def rdf2json(rdf_path):
 
     rdf_path = Path(rdf_path)
     rdf_json = xml2json(rdf_path.text())
 
     data = OrderedDict()
-    data['id'] = rdf_path.split('/')[-1].split('.')[0][2:]
-
     ebook_json = rdf_json['RDF']['ebook']
 
+    data['id'] = rdf_path.split('/')[-1].split('.')[0][2:]
     data['title'] = ebook_json['title']
     data['issued'] = ebook_json['issued']
 
@@ -173,4 +172,4 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Parse Gutenberg RDF file')
     parser.add_argument('path', help='Path to a rdf file')
     args = parser.parse_args()
-    print_json(normalize_rdf_json(args.path))
+    print_json(rdf2json(args.path))
